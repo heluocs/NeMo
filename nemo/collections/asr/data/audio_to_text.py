@@ -11,15 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Callable, Dict, List, Optional, Union
 import io
 import os
-from typing import Dict, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 import braceexpand
 import torch
 import webdataset as wd
 
+from nemo import logging
 from nemo.collections.asr.parts import collections, features, parsers
 from nemo.core.classes import Dataset, IterableDataset
 from nemo.core.neural_types import *
@@ -456,6 +456,8 @@ class TarredAudioToCharDataset(IterableDataset):
         parser='en',
         add_misc=False,
         pad_id=0,
+        global_rank=0,
+        world_size=0,
     ):
         self.collection = collections.ASRAudioText(
             manifests_files=manifest_filepath.split(','),
@@ -476,10 +478,7 @@ class TarredAudioToCharDataset(IterableDataset):
         self._add_misc = add_misc
 
         # Check for distributed and partition shards accordingly
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            global_rank = torch.distributed.get_rank()
-            world_size = torch.distributed.get_world_size()
-
+        if world_size > 1:
             if isinstance(audio_tar_filepaths, str):
                 audio_tar_filepaths = list(braceexpand.braceexpand(audio_tar_filepaths))
 
@@ -492,6 +491,9 @@ class TarredAudioToCharDataset(IterableDataset):
             begin_idx = (len(audio_tar_filepaths) // world_size) * global_rank
             end_idx = begin_idx + (len(audio_tar_filepaths) // world_size)
             audio_tar_filepaths = audio_tar_filepaths[begin_idx:end_idx]
+            logging.info(
+                "Partitioning tarred dataset: process (%d) taking shards [%d, %d)", global_rank, begin_idx, end_idx
+            )
 
         # Put together WebDataset
         self._dataset = (
